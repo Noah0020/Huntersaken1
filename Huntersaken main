@@ -1,0 +1,1060 @@
+repeat task.wait() until game:IsLoaded()
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+local CoreGui = game:GetService("CoreGui")
+local UserInputService = game:GetService("UserInputService")
+
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+local Camera = Workspace.CurrentCamera
+
+Workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+	if Workspace.CurrentCamera then Camera = Workspace.CurrentCamera end
+end)
+
+-- KEY
+local KEY = "release"
+do
+	local unlocked = false
+	local sg = Instance.new("ScreenGui")
+	sg.Name = "HuntsakenKey"
+	sg.ResetOnSpawn = false
+	sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	pcall(function() sg.Parent = (gethui and gethui()) or CoreGui end)
+	if not sg.Parent then sg.Parent = PlayerGui end
+
+	local frame = Instance.new("Frame")
+	frame.Size = UDim2.fromOffset(340, 200)
+	frame.Position = UDim2.fromScale(0.5, 0.5)
+	frame.AnchorPoint = Vector2.new(0.5, 0.5)
+	frame.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+	frame.BorderSizePixel = 0
+	frame.Parent = sg
+	Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 12)
+
+	local title = Instance.new("TextLabel")
+	title.Size = UDim2.new(1, 0, 0, 40)
+	title.BackgroundTransparency = 1
+	title.Text = "Huntsaken  |  Key"
+	title.TextColor3 = Color3.fromRGB(255, 60, 60)
+	title.Font = Enum.Font.GothamBold
+	title.TextSize = 20
+	title.Parent = frame
+
+	local note = Instance.new("TextLabel")
+	note.Size = UDim2.new(1, -24, 0, 50)
+	note.Position = UDim2.fromOffset(12, 40)
+	note.BackgroundTransparency = 1
+	note.Text = "Script owners are not responsible for bans.\nKEY = release"
+	note.TextColor3 = Color3.fromRGB(200, 200, 200)
+	note.Font = Enum.Font.Gotham
+	note.TextSize = 14
+	note.TextWrapped = true
+	note.Parent = frame
+
+	local box = Instance.new("TextBox")
+	box.Size = UDim2.new(1, -40, 0, 34)
+	box.Position = UDim2.fromOffset(20, 100)
+	box.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+	box.TextColor3 = Color3.new(1, 1, 1)
+	box.PlaceholderText = "Enter key..."
+	box.Font = Enum.Font.Gotham
+	box.TextSize = 14
+	box.ClearTextOnFocus = false
+	box.Parent = frame
+	Instance.new("UICorner", box).CornerRadius = UDim.new(0, 6)
+
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(1, -40, 0, 34)
+	btn.Position = UDim2.fromOffset(20, 145)
+	btn.BackgroundColor3 = Color3.fromRGB(180, 30, 30)
+	btn.Text = "Unlock"
+	btn.TextColor3 = Color3.new(1, 1, 1)
+	btn.Font = Enum.Font.GothamBold
+	btn.TextSize = 14
+	btn.Parent = frame
+	Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+
+	local function try()
+		if box.Text:lower():gsub("%s+", "") == KEY then
+			unlocked = true
+			sg:Destroy()
+		else
+			btn.Text = "Wrong key"
+			task.delay(1, function() if btn.Parent then btn.Text = "Unlock" end end)
+		end
+	end
+	btn.MouseButton1Click:Connect(try)
+	box.FocusLost:Connect(function(enter) if enter then try() end end)
+	while not unlocked do task.wait(0.1) end
+end
+
+-- ============================================================
+-- STATE
+-- ============================================================
+local S = {
+	KillerEsp = false, SurvivorEsp = false,
+	TeamCheck = false,
+	MaxEspDist = 500,
+	KillerColor = Color3.fromRGB(255, 40, 40),
+	SurvivorColor = Color3.fromRGB(40, 255, 40),
+
+	GeneratorEsp = false, GeneratorTags = false,
+	GeneratorColor = Color3.fromRGB(255, 255, 0),
+	FakeGeneratorColor = Color3.fromRGB(255, 165, 0),
+	DoneGeneratorColor = Color3.fromRGB(0, 255, 0),
+
+	ItemEsp = false, ItemTags = false,
+	ItemColor = Color3.fromRGB(85, 0, 255),
+
+	TrapEsp = false, TrapTags = false,
+	TrapColor = Color3.fromRGB(255, 80, 0),
+
+	InfStam = false, CustomStam = false,
+	MaxStam = 100, StamGain = 20, StamLoss = 10, SprintSpeed = 20,
+
+	AutoGen = false, GenCD = 1.5,
+}
+
+-- HELPERS
+local function getRoot(m)
+	return m and (m:FindFirstChild("HumanoidRootPart") or m.PrimaryPart)
+end
+
+local function folderKids(name)
+	local f = Workspace:FindFirstChild("Players") and Workspace.Players:FindFirstChild(name)
+	if not f then return {} end
+	local t = {}
+	for _, c in ipairs(f:GetChildren()) do
+		if c:IsA("Model") then table.insert(t, c) end
+	end
+	return t
+end
+
+local function getKillers() return folderKids("Killers") end
+local function getSurvivors() return folderKids("Survivors") end
+
+-- ============================================================
+-- ESP HIGHLIGHTS (only outline, nothing else)
+-- ============================================================
+local highlights = {}
+
+local function clearHL(m)
+	if highlights[m] then
+		pcall(function() highlights[m]:Destroy() end)
+		highlights[m] = nil
+	end
+end
+
+local function applyHL(model, color)
+	if not model or not model.Parent then return end
+	local h = highlights[model]
+	if not h or not h.Parent then
+		h = Instance.new("Highlight")
+		h.Name = "HS_HL"
+		h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+		h.FillTransparency = 0.65
+		h.OutlineTransparency = 0
+		h.Parent = model
+		highlights[model] = h
+	end
+	h.FillColor, h.OutlineColor, h.Adornee = color, color, model
+end
+
+local function removeHLOnly(model)
+	if highlights[model] then
+		pcall(function() highlights[model]:Destroy() end)
+		highlights[model] = nil
+	end
+end
+
+function shouldSkip(model)
+	if model == LocalPlayer.Character then return true end
+	if not S.TeamCheck then return false end
+	local myChar = LocalPlayer.Character
+	if not myChar then return false end
+	local myFolder = myChar.Parent and myChar.Parent.Name
+	if not myFolder then return false end
+	local theirFolder = model.Parent and model.Parent.Name
+	return myFolder == theirFolder
+end
+
+local function refreshEsp()
+	for m in pairs(highlights) do
+		if not m.Parent then clearHL(m) end
+	end
+
+	for _, k in ipairs(getKillers()) do
+		if shouldSkip(k) then
+			clearHL(k)
+		else
+			local hrp = getRoot(k)
+			local myRoot = getRoot(LocalPlayer.Character)
+			if hrp and myRoot and (S.MaxEspDist == 0 or (hrp.Position - myRoot.Position).Magnitude <= S.MaxEspDist) then
+				if S.KillerEsp then applyHL(k, S.KillerColor) else removeHLOnly(k) end
+			else
+				clearHL(k)
+			end
+		end
+	end
+	for _, s in ipairs(getSurvivors()) do
+		if shouldSkip(s) then
+			clearHL(s)
+		else
+			local hrp = getRoot(s)
+			local myRoot = getRoot(LocalPlayer.Character)
+			if hrp and myRoot and (S.MaxEspDist == 0 or (hrp.Position - myRoot.Position).Magnitude <= S.MaxEspDist) then
+				if S.SurvivorEsp then applyHL(s, S.SurvivorColor) else removeHLOnly(s) end
+			else
+				clearHL(s)
+			end
+		end
+	end
+end
+
+-- ============================================================
+-- GEN / ITEM / TRAP (highlight only)
+-- ============================================================
+local genHLs, itemHLs, trapHLs = {}, {}, {}
+
+local function clearHighlight(tbl, inst)
+	if tbl[inst] then
+		pcall(function() tbl[inst]:Destroy() end)
+		tbl[inst] = nil
+	end
+end
+
+local function makeHighlight(tbl, inst, color, fillTrans)
+	if not inst or not inst.Parent then return end
+	local h = tbl[inst]
+	if h and h.Parent then
+		h.FillColor = color
+		h.OutlineColor = color
+		return h
+	end
+	h = Instance.new("Highlight")
+	h.Name = "HA_HL"
+	h.Adornee = inst
+	h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	h.FillColor = color
+	h.OutlineColor = color
+	h.FillTransparency = fillTrans or 0.5
+	h.OutlineTransparency = 0
+	h.Parent = inst
+	tbl[inst] = h
+	return h
+end
+
+local function getGeneratorProgress(gen)
+	local p = gen:FindFirstChild("Progress")
+	if p and typeof(p.Value) == "number" then return p.Value end
+	return nil
+end
+
+local function isGenerator(inst)
+	if not inst or not inst.Parent then return false end
+	local n = inst.Name
+	return n == "Generator" or n == "FakeGenerator" or n == "Fake Generator"
+end
+
+local function genColor(gen)
+	if gen.Name == "FakeGenerator" or gen.Name == "Fake Generator" then
+		return S.FakeGeneratorColor
+	end
+	local p = getGeneratorProgress(gen)
+	if p and p >= 100 then return S.DoneGeneratorColor end
+	return S.GeneratorColor
+end
+
+local ITEM_NAMES = { BloxyCola = true, Medkit = true, ["Med Kit"] = true }
+
+local function isItem(inst)
+	return inst and inst.Parent and ITEM_NAMES[inst.Name] == true
+end
+
+local function isTrap(inst)
+	if not inst or not inst.Parent then return false end
+	local n = inst.Name
+	if n == "SubspaceTripmine" then return true end
+	if n == "BearTrap" or n == "Trap" then return true end
+	if inst:FindFirstChild("Wire") then return true end
+	return false
+end
+
+local function getIngame()
+	return Workspace:FindFirstChild("Map") and Workspace.Map:FindFirstChild("Ingame")
+		or Workspace:FindFirstChild("Ingame")
+end
+
+local function scanGenerators()
+	local roots = {}
+	local ingame = getIngame()
+	local map = ingame and ingame:FindFirstChild("Map")
+	if map then table.insert(roots, map) end
+	if ingame then table.insert(roots, ingame) end
+	table.insert(roots, Workspace)
+
+	local seen = {}
+	for _, root in ipairs(roots) do
+		for _, child in ipairs(root:GetChildren()) do
+			if isGenerator(child) and not seen[child] then
+				seen[child] = true
+				if S.GeneratorEsp then
+					makeHighlight(genHLs, child, genColor(child), 0.5)
+				else
+					clearHighlight(genHLs, child)
+				end
+			end
+		end
+	end
+end
+
+local function scanItems()
+	local roots = {}
+	local ingame = getIngame()
+	local map = ingame and ingame:FindFirstChild("Map")
+	if map then table.insert(roots, map) end
+	if ingame then table.insert(roots, ingame) end
+	table.insert(roots, Workspace)
+
+	local seen = {}
+	for _, root in ipairs(roots) do
+		for _, child in ipairs(root:GetChildren()) do
+			if isItem(child) and not seen[child] then
+				seen[child] = true
+				if S.ItemEsp then
+					makeHighlight(itemHLs, child, S.ItemColor, 0.5)
+				else
+					clearHighlight(itemHLs, child)
+				end
+			end
+		end
+	end
+end
+
+local function scanTraps()
+	local roots = {}
+	local ingame = getIngame()
+	local map = ingame and ingame:FindFirstChild("Map")
+	if map then table.insert(roots, map) end
+	if ingame then table.insert(roots, ingame) end
+	table.insert(roots, Workspace)
+
+	local seen = {}
+	for _, root in ipairs(roots) do
+		for _, child in ipairs(root:GetChildren()) do
+			if isTrap(child) and not seen[child] then
+				seen[child] = true
+				if S.TrapEsp then
+					makeHighlight(trapHLs, child, S.TrapColor, 0.5)
+				else
+					clearHighlight(trapHLs, child)
+				end
+			end
+		end
+	end
+end
+
+-- ============================================================
+-- STAMINA
+-- ============================================================
+local sprintCache = nil
+local function getSprint()
+	if sprintCache then return sprintCache end
+	local ok, mod = pcall(function()
+		return require(ReplicatedStorage.Systems.Character.Game.Sprinting)
+	end)
+	if ok and type(mod) == "table" then
+		sprintCache = mod
+		return mod
+	end
+	return nil
+end
+
+local function applyStamina()
+	local sprint = getSprint()
+	if not sprint then return end
+	if S.InfStam then
+		pcall(function()
+			sprint.Stamina = sprint.MaxStamina or S.MaxStam
+			if sprint.StaminaLossDisabled ~= nil then sprint.StaminaLossDisabled = true end
+		end)
+	end
+	if S.CustomStam then
+		pcall(function()
+			sprint.MaxStamina = S.MaxStam
+			sprint.StaminaGain = S.StamGain
+			if sprint.StaminaLoss then sprint.StaminaLoss = S.StamLoss end
+			if sprint.StaminaDrain then sprint.StaminaDrain = S.StamLoss end
+			if sprint.SprintSpeed then sprint.SprintSpeed = S.SprintSpeed end
+		end)
+	end
+end
+
+-- ============================================================
+-- AUTO GEN
+-- ============================================================
+local genConns, genFlag, genThread
+
+local function isNoliGenerator(gen)
+	if not gen then return false end
+	local n = (gen.Name .. " " .. (gen:GetFullName() or "")):lower()
+	if n:find("noli") then return true end
+	if gen:GetAttribute("Noli") or gen:GetAttribute("IsNoli") then return true end
+	for _, d in ipairs(gen:GetDescendants()) do
+		if d.Name:lower():find("noli") then return true end
+	end
+	return false
+end
+
+local function findGenerators(skipNoli)
+	local found, seen = {}, {}
+	local function add(child)
+		if seen[child] then return end
+		if child.Name ~= "Generator" and child.Name ~= "FakeGenerator" then return end
+		if skipNoli and isNoliGenerator(child) then return end
+		seen[child] = true
+		table.insert(found, child)
+	end
+	local function scan(root)
+		if not root then return end
+		for _, child in ipairs(root:GetChildren()) do add(child) end
+	end
+	scan(Workspace:FindFirstChild("Map"))
+	local ingame = Workspace:FindFirstChild("Ingame")
+	if ingame then
+		scan(ingame:FindFirstChild("Map"))
+		scan(ingame)
+	end
+	if #found == 0 then
+		for _, d in ipairs(Workspace:GetDescendants()) do
+			if d.Name == "Generator" or d.Name == "FakeGenerator" then add(d) end
+		end
+	end
+	return found
+end
+
+local function repairNearby()
+	local hrp = getRoot(LocalPlayer.Character)
+	if not hrp then return end
+	for _, gen in ipairs(findGenerators(true)) do
+		local progress = gen:FindFirstChild("Progress")
+		local main = gen:FindFirstChild("Main") or gen:FindFirstChild("Base") or gen.PrimaryPart
+		if not main then
+			for _, c in ipairs(gen:GetChildren()) do
+				if c:IsA("BasePart") then main = c break end
+			end
+		end
+		if main and progress and tonumber(progress.Value) and progress.Value < 100 then
+			if (hrp.Position - main.Position).Magnitude < 14 then
+				local remotes = gen:FindFirstChild("Remotes")
+				local re = remotes and (remotes:FindFirstChild("RE") or remotes:FindFirstChildWhichIsA("RemoteEvent"))
+				if re then pcall(function() re:FireServer() end) end
+				for _, r in ipairs(gen:GetDescendants()) do
+					if r:IsA("RemoteEvent") and (r.Name == "RE" or r.Name:lower():find("repair") or r.Name:lower():find("gen")) then
+						pcall(function() r:FireServer() end)
+					end
+				end
+			end
+		end
+	end
+end
+
+local function setAutoGen(on)
+	S.AutoGen = on
+	genFlag = false
+	if genThread then task.cancel(genThread) genThread = nil end
+	if genConns then
+		for _, c in ipairs(genConns) do pcall(function() c:Disconnect() end) end
+		genConns = nil
+	end
+	if not on then return end
+
+	local function loop()
+		while genFlag do
+			local t0 = os.clock()
+			while genFlag and os.clock() - t0 < S.GenCD do RunService.Heartbeat:Wait() end
+			if not genFlag then break end
+			pcall(repairNearby)
+		end
+	end
+
+	local function start()
+		if genFlag then return end
+		genFlag = true
+		genThread = task.spawn(loop)
+	end
+	local function stop()
+		genFlag = false
+		if genThread then task.cancel(genThread) genThread = nil end
+	end
+
+	local pg = LocalPlayer:FindFirstChild("PlayerGui") or LocalPlayer:WaitForChild("PlayerGui", 8)
+	genConns = {}
+	if pg then
+		table.insert(genConns, pg.ChildAdded:Connect(function(c)
+			local n = c.Name:lower()
+			if n:find("puzzle") or n:find("generator") or n:find("minigame") then start() end
+		end))
+		table.insert(genConns, pg.ChildRemoved:Connect(function(c)
+			local n = c.Name:lower()
+			if n:find("puzzle") or n:find("minigame") then stop() end
+		end))
+		for _, c in ipairs(pg:GetChildren()) do
+			local n = c.Name:lower()
+			if n:find("puzzle") or n:find("generator") or n:find("minigame") then start() end
+		end
+	end
+	start()
+end
+
+-- ============================================================
+-- CUSTOM GUI
+-- ============================================================
+local GUI = Instance.new("ScreenGui")
+GUI.Name = "HuntsakenGUI"
+GUI.ResetOnSpawn = false
+GUI.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+GUI.IgnoreGuiInset = true
+pcall(function() GUI.Parent = (gethui and gethui()) or CoreGui end)
+if not GUI.Parent then GUI.Parent = PlayerGui end
+
+local toggleBtn = Instance.new("TextButton")
+toggleBtn.Size = UDim2.fromOffset(60, 60)
+toggleBtn.Position = UDim2.new(1, -160, 1, -80)
+toggleBtn.AnchorPoint = Vector2.new(0.5, 0.5)
+toggleBtn.BackgroundColor3 = Color3.fromRGB(180, 30, 30)
+toggleBtn.Text = "HS"
+toggleBtn.TextColor3 = Color3.new(1, 1, 1)
+toggleBtn.Font = Enum.Font.GothamBold
+toggleBtn.TextSize = 20
+toggleBtn.Active = true
+toggleBtn.Draggable = true
+toggleBtn.Parent = GUI
+Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(1, 0)
+local tbStroke = Instance.new("UIStroke", toggleBtn); tbStroke.Color = Color3.fromRGB(255, 100, 100); tbStroke.Thickness = 2
+
+local panel = Instance.new("Frame")
+panel.Size = UDim2.fromOffset(620, 480)
+panel.Position = UDim2.fromScale(0.5, 0.5)
+panel.AnchorPoint = Vector2.new(0.5, 0.5)
+panel.BackgroundColor3 = Color3.fromRGB(20, 20, 26)
+panel.BorderSizePixel = 0
+panel.Visible = false
+panel.Active = true
+panel.Parent = GUI
+Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 12)
+local pStroke = Instance.new("UIStroke", panel); pStroke.Color = Color3.fromRGB(180, 30, 30); pStroke.Thickness = 2
+
+local titleBar = Instance.new("Frame")
+titleBar.Size = UDim2.new(1, 0, 0, 40)
+titleBar.BackgroundColor3 = Color3.fromRGB(40, 20, 20)
+titleBar.BorderSizePixel = 0
+titleBar.Parent = panel
+Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0, 12)
+local tbFix = Instance.new("Frame")
+tbFix.Size = UDim2.new(1, 0, 0, 12)
+tbFix.Position = UDim2.new(0, 0, 1, -12)
+tbFix.BackgroundColor3 = Color3.fromRGB(40, 20, 20)
+tbFix.BorderSizePixel = 0
+tbFix.Parent = titleBar
+
+local titleText = Instance.new("TextLabel")
+titleText.Size = UDim2.new(1, -80, 1, 0)
+titleText.Position = UDim2.fromOffset(14, 0)
+titleText.BackgroundTransparency = 1
+titleText.Text = "Huntsaken | Slim"
+titleText.TextColor3 = Color3.fromRGB(255, 100, 100)
+titleText.Font = Enum.Font.GothamBold
+titleText.TextSize = 16
+titleText.TextXAlignment = Enum.TextXAlignment.Left
+titleText.Parent = titleBar
+
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.fromOffset(28, 28)
+closeBtn.Position = UDim2.new(1, -34, 0, 6)
+closeBtn.BackgroundColor3 = Color3.fromRGB(200, 40, 40)
+closeBtn.Text = "X"
+closeBtn.TextColor3 = Color3.new(1, 1, 1)
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.TextSize = 14
+closeBtn.Parent = titleBar
+Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 6)
+
+local tabsRow = Instance.new("Frame")
+tabsRow.Size = UDim2.new(1, -20, 0, 36)
+tabsRow.Position = UDim2.fromOffset(10, 50)
+tabsRow.BackgroundTransparency = 1
+tabsRow.Parent = panel
+local tabsLayout = Instance.new("UIListLayout", tabsRow)
+tabsLayout.FillDirection = Enum.FillDirection.Horizontal
+tabsLayout.Padding = UDim.new(0, 6)
+
+local content = Instance.new("Frame")
+content.Size = UDim2.new(1, -20, 1, -100)
+content.Position = UDim2.fromOffset(10, 92)
+content.BackgroundTransparency = 1
+content.Parent = panel
+
+local tabPages = {}
+
+local function makeTabPage()
+	local page = Instance.new("ScrollingFrame")
+	page.Size = UDim2.new(1, 0, 1, 0)
+	page.BackgroundColor3 = Color3.fromRGB(28, 28, 34)
+	page.BorderSizePixel = 0
+	page.ScrollBarThickness = 4
+	page.ScrollBarImageColor3 = Color3.fromRGB(180, 30, 30)
+	page.CanvasSize = UDim2.new(0, 0, 0, 0)
+	page.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	page.Visible = false
+	page.Parent = content
+	Instance.new("UICorner", page).CornerRadius = UDim.new(0, 8)
+	local pad = Instance.new("UIPadding", page)
+	pad.PaddingTop = UDim.new(0, 8)
+	pad.PaddingBottom = UDim.new(0, 8)
+	pad.PaddingLeft = UDim.new(0, 10)
+	pad.PaddingRight = UDim.new(0, 10)
+	local list = Instance.new("UIListLayout", page)
+	list.Padding = UDim.new(0, 6)
+	list.SortOrder = Enum.SortOrder.LayoutOrder
+	return page
+end
+
+local function createTab(name)
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.fromOffset(100, 32)
+	btn.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
+	btn.Text = name
+	btn.TextColor3 = Color3.fromRGB(220, 220, 220)
+	btn.Font = Enum.Font.GothamBold
+	btn.TextSize = 13
+	btn.Parent = tabsRow
+	Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+
+	local page = makeTabPage()
+	table.insert(tabPages, { btn = btn, page = page, name = name })
+
+	btn.MouseButton1Click:Connect(function()
+		for _, t in ipairs(tabPages) do
+			t.page.Visible = false
+			t.btn.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
+			t.btn.TextColor3 = Color3.fromRGB(220, 220, 220)
+		end
+		btn.BackgroundColor3 = Color3.fromRGB(180, 30, 30)
+		btn.TextColor3 = Color3.new(1, 1, 1)
+		page.Visible = true
+	end)
+
+	return page, btn
+end
+
+local function makeSection(parent, text)
+	local l = Instance.new("TextLabel")
+	l.Size = UDim2.new(1, -4, 0, 24)
+	l.BackgroundColor3 = Color3.fromRGB(50, 30, 30)
+	l.BorderSizePixel = 0
+	l.Text = "  " .. text
+	l.TextColor3 = Color3.fromRGB(255, 130, 130)
+	l.Font = Enum.Font.GothamBold
+	l.TextSize = 12
+	l.TextXAlignment = Enum.TextXAlignment.Left
+	l.Parent = parent
+	Instance.new("UICorner", l).CornerRadius = UDim.new(0, 4)
+	return l
+end
+
+local function makeToggle(parent, name, initial, callback)
+	local row = Instance.new("Frame")
+	row.Size = UDim2.new(1, -4, 0, 34)
+	row.BackgroundColor3 = Color3.fromRGB(38, 38, 46)
+	row.BorderSizePixel = 0
+	row.Parent = parent
+	Instance.new("UICorner", row).CornerRadius = UDim.new(0, 6)
+
+	local lbl = Instance.new("TextLabel")
+	lbl.Size = UDim2.new(1, -70, 1, 0)
+	lbl.Position = UDim2.fromOffset(10, 0)
+	lbl.BackgroundTransparency = 1
+	lbl.Text = name
+	lbl.TextColor3 = Color3.fromRGB(220, 220, 220)
+	lbl.Font = Enum.Font.GothamMedium
+	lbl.TextSize = 13
+	lbl.TextXAlignment = Enum.TextXAlignment.Left
+	lbl.Parent = row
+
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.fromOffset(50, 22)
+	btn.Position = UDim2.new(1, -56, 0.5, -11)
+	btn.BackgroundColor3 = initial and Color3.fromRGB(100, 180, 100) or Color3.fromRGB(80, 80, 90)
+	btn.Text = initial and "ON" or "OFF"
+	btn.TextColor3 = Color3.new(1, 1, 1)
+	btn.Font = Enum.Font.GothamBold
+	btn.TextSize = 11
+	btn.Parent = row
+	Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
+
+	btn.MouseButton1Click:Connect(function()
+		local state = btn.Text ~= "ON"
+		btn.Text = state and "ON" or "OFF"
+		btn.BackgroundColor3 = state and Color3.fromRGB(100, 180, 100) or Color3.fromRGB(80, 80, 90)
+		if callback then callback(state) end
+	end)
+	return btn
+end
+
+local function makeSlider(parent, name, minV, maxV, initial, callback)
+	local row = Instance.new("Frame")
+	row.Size = UDim2.new(1, -4, 0, 46)
+	row.BackgroundColor3 = Color3.fromRGB(38, 38, 46)
+	row.BorderSizePixel = 0
+	row.Parent = parent
+	Instance.new("UICorner", row).CornerRadius = UDim.new(0, 6)
+
+	local lbl = Instance.new("TextLabel")
+	lbl.Size = UDim2.new(1, -70, 0, 18)
+	lbl.Position = UDim2.fromOffset(10, 4)
+	lbl.BackgroundTransparency = 1
+	lbl.Text = name
+	lbl.TextColor3 = Color3.fromRGB(220, 220, 220)
+	lbl.Font = Enum.Font.GothamMedium
+	lbl.TextSize = 12
+	lbl.TextXAlignment = Enum.TextXAlignment.Left
+	lbl.Parent = row
+
+	local val = Instance.new("TextLabel")
+	val.Size = UDim2.new(0, 60, 0, 18)
+	val.Position = UDim2.new(1, -70, 0, 4)
+	val.BackgroundTransparency = 1
+	val.Text = tostring(math.floor(initial * 100) / 100)
+	val.TextColor3 = Color3.fromRGB(255, 130, 130)
+	val.Font = Enum.Font.GothamBold
+	val.TextSize = 12
+	val.TextXAlignment = Enum.TextXAlignment.Right
+	val.Parent = row
+
+	local bg = Instance.new("Frame")
+	bg.Size = UDim2.new(1, -20, 0, 8)
+	bg.Position = UDim2.new(0, 10, 0, 30)
+	bg.BackgroundColor3 = Color3.fromRGB(55, 55, 65)
+	bg.BorderSizePixel = 0
+	bg.Parent = row
+	Instance.new("UICorner", bg).CornerRadius = UDim.new(1, 0)
+
+	local fill = Instance.new("Frame")
+	fill.Size = UDim2.new(0, 0, 1, 0)
+	fill.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+	fill.BorderSizePixel = 0
+	fill.Parent = bg
+	Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
+
+	local function setV(v)
+		local pct = (v - minV) / (maxV - minV)
+		fill.Size = UDim2.new(pct, 0, 1, 0)
+		val.Text = tostring(math.floor(v * 100) / 100)
+	end
+	setV(initial)
+
+	local dragging = false
+	local function apply(x)
+		local abs = bg.AbsolutePosition.X
+		local w = bg.AbsoluteSize.X
+		local pct = math.clamp((x - abs) / w, 0, 1)
+		local v = minV + pct * (maxV - minV)
+		setV(v)
+		if callback then callback(v) end
+	end
+
+	bg.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			apply(input.Position.X)
+		end
+	end)
+	UserInputService.InputChanged:Connect(function(input)
+		if not dragging then return end
+		if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+			apply(input.Position.X)
+		end
+	end)
+	UserInputService.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = false
+		end
+	end)
+	return row
+end
+
+local function makeButton(parent, name, callback)
+	local b = Instance.new("TextButton")
+	b.Size = UDim2.new(1, -4, 0, 32)
+	b.BackgroundColor3 = Color3.fromRGB(60, 60, 80)
+	b.Text = name
+	b.TextColor3 = Color3.fromRGB(230, 230, 230)
+	b.Font = Enum.Font.GothamBold
+	b.TextSize = 13
+	b.Parent = parent
+	Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+	b.MouseButton1Click:Connect(function()
+		if callback then pcall(callback) end
+	end)
+	return b
+end
+
+local function makeLabel(parent, text, color)
+	local l = Instance.new("TextLabel")
+	l.Size = UDim2.new(1, -4, 0, 20)
+	l.BackgroundTransparency = 1
+	l.Text = text
+	l.TextColor3 = color or Color3.fromRGB(200, 200, 210)
+	l.Font = Enum.Font.GothamMedium
+	l.TextSize = 12
+	l.TextXAlignment = Enum.TextXAlignment.Left
+	l.Parent = parent
+	return l
+end
+
+local function notify(title, text, dur)
+	local n = Instance.new("Frame")
+	n.Size = UDim2.fromOffset(280, 60)
+	n.Position = UDim2.new(1, -300, 0, 20)
+	n.BackgroundColor3 = Color3.fromRGB(30, 30, 38)
+	n.BorderSizePixel = 0
+	n.Parent = GUI
+	Instance.new("UICorner", n).CornerRadius = UDim.new(0, 8)
+	local s = Instance.new("UIStroke", n); s.Color = Color3.fromRGB(180, 30, 30); s.Thickness = 2
+
+	local t = Instance.new("TextLabel")
+	t.Size = UDim2.new(1, -20, 0, 22)
+	t.Position = UDim2.fromOffset(10, 6)
+	t.BackgroundTransparency = 1
+	t.Text = title or "Huntsaken"
+	t.TextColor3 = Color3.fromRGB(255, 130, 130)
+	t.Font = Enum.Font.GothamBold
+	t.TextSize = 13
+	t.TextXAlignment = Enum.TextXAlignment.Left
+	t.Parent = n
+
+	local c = Instance.new("TextLabel")
+	c.Size = UDim2.new(1, -20, 0, 26)
+	c.Position = UDim2.fromOffset(10, 28)
+	c.BackgroundTransparency = 1
+	c.Text = text or ""
+	c.TextColor3 = Color3.fromRGB(210, 210, 220)
+	c.Font = Enum.Font.Gotham
+	c.TextSize = 11
+	c.TextXAlignment = Enum.TextXAlignment.Left
+	c.TextWrapped = true
+	c.Parent = n
+
+	task.delay(dur or 3, function()
+		pcall(function() n:Destroy() end)
+	end)
+end
+
+-- ============================================================
+-- TABS
+-- ============================================================
+local pageVisual = createTab("Visual")
+local pageItems  = createTab("Items")
+local pageStam   = createTab("Stamina")
+local pageGen    = createTab("Generators")
+local pageLoader = createTab("Loader")
+local pageCred   = createTab("Credits")
+
+for _, t in ipairs(tabPages) do
+	if t.name == "Visual" then
+		t.btn.BackgroundColor3 = Color3.fromRGB(180, 30, 30)
+		t.btn.TextColor3 = Color3.new(1, 1, 1)
+		t.page.Visible = true
+	end
+end
+
+-- ============================================================
+-- VISUAL TAB
+-- ============================================================
+makeSection(pageVisual, "Killer ESP")
+makeToggle(pageVisual, "Killer Highlight", false, function(v) S.KillerEsp = v refreshEsp() end)
+
+makeSection(pageVisual, "Survivor ESP")
+makeToggle(pageVisual, "Survivor Highlight", false, function(v) S.SurvivorEsp = v refreshEsp() end)
+
+makeSection(pageVisual, "ESP Options")
+makeToggle(pageVisual, "Team Check", false, function(v) S.TeamCheck = v refreshEsp() end)
+makeSlider(pageVisual, "Max ESP Distance (0 = unlimited)", 0, 1000, 500, function(v) S.MaxEspDist = v end)
+
+-- ============================================================
+-- ITEMS TAB
+-- ============================================================
+makeSection(pageItems, "Items")
+makeToggle(pageItems, "Medkit / Bandage ESP", false, function(v) S.MedkitEsp = v refreshEsp() end)
+makeToggle(pageItems, "Bloxy Cola ESP", false, function(v) S.BloxyEsp = v refreshEsp() end)
+makeToggle(pageItems, "Pizza ESP", false, function(v) S.PizzaEsp = v refreshEsp() end)
+
+makeSection(pageItems, "Generators")
+makeToggle(pageItems, "Generator Highlight", false, function(v) S.GeneratorEsp = v if not v then for g in pairs(genHLs) do clearHighlight(genHLs, g) end end end)
+
+makeSection(pageItems, "Items Highlight")
+makeToggle(pageItems, "Item Highlight (Bloxy / Medkit)", false, function(v) S.ItemEsp = v if not v then for i in pairs(itemHLs) do clearHighlight(itemHLs, i) end end end)
+
+makeSection(pageItems, "Traps")
+makeToggle(pageItems, "Trap Highlight", false, function(v) S.TrapEsp = v if not v then for t in pairs(trapHLs) do clearHighlight(trapHLs, t) end end end)
+
+-- ============================================================
+-- STAMINA TAB
+-- ============================================================
+makeSection(pageStam, "Stamina")
+makeToggle(pageStam, "Infinite Stamina", false, function(v) S.InfStam = v end)
+makeToggle(pageStam, "Custom Stamina", false, function(v) S.CustomStam = v end)
+makeSlider(pageStam, "Max Stamina", 50, 300, 100, function(v) S.MaxStam = v end)
+makeSlider(pageStam, "Stamina Gain", 1, 100, 20, function(v) S.StamGain = v end)
+makeSlider(pageStam, "Stamina Loss", 0, 50, 10, function(v) S.StamLoss = v end)
+makeSlider(pageStam, "Sprint Speed", 10, 40, 20, function(v) S.SprintSpeed = v end)
+
+-- ============================================================
+-- GENERATORS TAB
+-- ============================================================
+makeSection(pageGen, "Auto Generator")
+makeToggle(pageGen, "Auto Generator", false, function(v) setAutoGen(v) end)
+makeSlider(pageGen, "Repair Cooldown", 0.5, 8, 1.5, function(v) S.GenCD = v end)
+makeButton(pageGen, "Force Repair Now", function()
+	pcall(repairNearby)
+	notify("Gen", "Repair attempt")
+end)
+
+-- ============================================================
+-- LOADER TAB
+-- ============================================================
+local function httpGet(url)
+	local ok, res = pcall(function() return game:HttpGet(url, true) end)
+	if ok and type(res) == "string" and #res > 0 then return res end
+	if syn and syn.request then
+		local ok2, res2 = pcall(function() return syn.request({ Url = url, Method = "GET" }).Body end)
+		if ok2 and type(res2) == "string" and #res2 > 0 then return res2 end
+	end
+	if request then
+		local ok3, res3 = pcall(function() return request({ Url = url, Method = "GET" }).Body end)
+		if ok3 and type(res3) == "string" and #res3 > 0 then return res3 end
+	end
+	return nil
+end
+
+makeSection(pageLoader, "External Scripts")
+
+makeButton(pageLoader, "Hunter Hub Auto Block", function()
+	local src = httpGet("https://raw.githubusercontent.com/Noah0020/Hunter/main/Block")
+	if not src or #src < 100 then notify("Loader", "Auto Block source empty") return end
+	local ok, err = pcall(function()
+		local fn = loadstring(src)
+		if not fn then error("loadstring failed") end
+		fn()
+	end)
+	notify("Loader", ok and "Auto Block loaded" or ("Auto Block FAILED: " .. tostring(err)))
+end)
+
+makeButton(pageLoader, "Hunter Hub Aim", function()
+	local src = httpGet("https://raw.githubusercontent.com/Noah0020/Hunteraim/main/Aim")
+	if not src or #src < 100 then notify("Loader", "Aim source empty") return end
+	local ok, err = pcall(function()
+		local fn, parseErr = loadstring(src)
+		if not fn then error("Parse: " .. tostring(parseErr)) end
+		fn()
+	end)
+	notify("Loader", ok and "Aim loaded" or ("Aim FAILED: " .. tostring(err)))
+end)
+
+makeButton(pageLoader, "Hunter Killers", function()
+	local src = httpGet("https://raw.githubusercontent.com/Noah0020/Hunter-killer/main/Killer")
+	if not src or #src < 100 then notify("Loader", "Killers source empty") return end
+	local ok, err = pcall(function()
+		local fn, parseErr = loadstring(src)
+		if not fn then error("Parse: " .. tostring(parseErr)) end
+		fn()
+	end)
+	notify("Loader", ok and "Killers loaded" or ("Killers FAILED: " .. tostring(err)))
+end)
+
+makeButton(pageLoader, "Execute All Three", function()
+	task.spawn(function()
+		local src = httpGet("https://raw.githubusercontent.com/Noah0020/Hunter/main/Block")
+		if src then pcall(function() loadstring(src)() end) notify("Loader", "Auto Block loaded") else notify("Loader", "Auto Block FAILED") end
+	end)
+	task.wait(0.4)
+	task.spawn(function()
+		local src = httpGet("https://raw.githubusercontent.com/Noah0020/Hunteraim/main/Aim")
+		if src then pcall(function() loadstring(src)() end) notify("Loader", "Aim loaded") else notify("Loader", "Aim FAILED") end
+	end)
+	task.wait(0.4)
+	task.spawn(function()
+		local src = httpGet("https://raw.githubusercontent.com/Noah0020/Hunter-killer/main/Killer")
+		if src then pcall(function() loadstring(src)() end) notify("Loader", "Killers loaded") else notify("Loader", "Killers FAILED") end
+	end)
+end)
+
+-- ============================================================
+-- CREDITS TAB
+-- ============================================================
+makeSection(pageCred, "Huntsaken")
+makeLabel(pageCred, "Owner: viltrumite")
+makeLabel(pageCred, "Helper: Artful is gay irl")
+makeLabel(pageCred, "Key: release")
+makeLabel(pageCred, "Version: Beta 1 - ESP only")
+
+-- ============================================================
+-- PANEL DRAG + CLOSE
+-- ============================================================
+local dragging = false
+local dragStart, startPos
+
+titleBar.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = true
+		dragStart = input.Position
+		startPos = panel.Position
+	end
+end)
+UserInputService.InputChanged:Connect(function(input)
+	if not dragging then return end
+	if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+		local delta = input.Position - dragStart
+		panel.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+	end
+end)
+UserInputService.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = false
+	end
+end)
+
+closeBtn.MouseButton1Click:Connect(function() panel.Visible = false end)
+toggleBtn.MouseButton1Click:Connect(function() panel.Visible = not panel.Visible end)
+
+-- ============================================================
+-- BACKGROUND LOOPS
+-- ============================================================
+task.spawn(function()
+	while true do
+		task.wait(1.5)
+
+		-- Only run if any ESP toggle is on
+		if S.KillerEsp or S.SurvivorEsp
+			or S.GeneratorEsp or S.ItemEsp or S.TrapEsp
+			or S.MedkitEsp or S.BloxyEsp or S.PizzaEsp then
+			pcall(refreshEsp)
+		end
+
+		if S.GeneratorEsp then pcall(scanGenerators) end
+		if S.ItemEsp or S.MedkitEsp or S.BloxyEsp or S.PizzaEsp then pcall(scanItems) end
+		if S.TrapEsp then pcall(scanTraps) end
+	end
+end)
+
+RunService.Heartbeat:Connect(function()
+	if S.InfStam or S.CustomStam then pcall(applyStamina) end
+end)
+
+task.wait(0.2)
+notify("Huntsaken", "Loaded - ESP only")
