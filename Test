@@ -30,7 +30,6 @@ local PlayersFolder   = workspace:WaitForChild("Players", 30)
 local KillersFolder   = PlayersFolder and PlayersFolder:WaitForChild("Killers", 30)
 local SurvivorsFolder = PlayersFolder and PlayersFolder:WaitForChild("Survivors", 30)
 
--- buffers
 local function buildBuffer(str)
     local bytes = { 3, #str, 0, 0, 0 }
     for i = 1, #str do bytes[#bytes + 1] = string.byte(str, i) end
@@ -45,7 +44,7 @@ local PUNCH_BUF = buildBuffer("Punch")
 local lastBlockFire = 0
 local BLOCK_COOLDOWN = 0.55
 
-local HDT, AIM, CHANCEAIM, AbilityHook, GUESTAIM, AUTOGEN, STAB, AZ, HBE, FacingVisual
+local HDT, AIM, AbilityHook, GUESTAIM, AUTOGEN, STAB, AZ, HBE, FacingVisual
 
 local function fireBlock()
     local now = tick()
@@ -62,7 +61,6 @@ local function firePunch()
     RemoteEvent:FireServer("UseActorAbility", { PUNCH_BUF })
 end
 
--- cfg
 local CFG = {
     AutoBlockEnabled = false,
     DetectionRange   = 22,
@@ -79,7 +77,6 @@ local CFG = {
     InfiniteStamina  = false,
 }
 
--- helpers
 local RAY_LOS = RaycastParams.new()
 RAY_LOS.FilterType = Enum.RaycastFilterType.Exclude
 RAY_LOS.IgnoreWater = true
@@ -152,7 +149,6 @@ local function nearestKillerPart()
     return best
 end
 
--- detection data
 local TRIGGER_SOUNDS = {
     ["102228729296384"]=true,["140242176732868"]=true,["112809109188560"]=true,["136323728355613"]=true,
     ["115026634746636"]=true,["84116622032112"]=true,["108907358619313"]=true,["127793641088496"]=true,
@@ -204,7 +200,6 @@ local TRIGGER_ANIMS = {
 local TRIGGER_ANIMS_SET = {}
 for _, id in ipairs(TRIGGER_ANIMS) do TRIGGER_ANIMS_SET[id] = true end
 
--- auto block
 local hookedSounds = {}
 
 local function onSoundTrigger(sound)
@@ -317,7 +312,6 @@ if KillersFolder then
     KillersFolder.ChildAdded:Connect(hookKiller)
 end
 
--- hdt
 HDT = {
     Enabled = false, AutoTrigger = true, Speed = 10, Delay = 0,
     StopDistance = 2, SafetyTimeout = 0.4,
@@ -441,7 +435,7 @@ lp.CharacterAdded:Connect(function()
     hookHDTAnimator()
 end)
 
--- aim
+-- aim (button-trigger only)
 AIM = {
     Enabled     = false,
     ForceAim    = false,
@@ -451,93 +445,12 @@ AIM = {
     PredictLead = 0.15,
     PingMult    = 1.0,
     Debug       = false,
-    MatchActive = true,
-    EventActive = false,
-    EventRefCount = 0,
-    CurrentAbility = nil,
+    CurrentAbility  = nil,
     CachedTargetHRP = nil,
-    AnimIds = {},
-    SoundIds = {},
-    AnimConn = nil,
-    SoundConns = {},
-    GenericConn = nil,
     _forceUntil = 0,
 }
 
-local ABILITY_ANIM_KEYS = {
-    Slash = true,
-    AimGun = true, GunFire = true, GunExplode = true, GunFail = true,
-    Stab = true, LungeStart = true, Lunge = true,
-}
-local ABILITY_SOUND_KEYS = {
-    Slash = true,
-    GunFire = true, GunExplode = true, GunFail = true, Shoot = true,
-    Stab = true, Lunge = true,
-}
 local PING_ABILITIES = { AimGun = true, GunFire = true, GunExplode = true, GunFail = true }
-local SOUND_FIELDS = {"Sounds", "Sound", "SFX", "Sfx", "SoundEffects", "SoundIds"}
-
-local STATIC_ABILITY_ANIMS = {
-    ["133491532453922"] = "AimGun",
-}
-local STATIC_ABILITY_SOUNDS = {}
-
-local Assets = ReplicatedStorage:FindFirstChild("Assets")
-    or ReplicatedStorage:WaitForChild("Assets", 10)
-
-local function pushIdsFromValue(value, intoSet, abilityName)
-    if type(value) == "string" or type(value) == "number" then
-        local id = tostring(value):match("%d+")
-        if id and not intoSet[id] then intoSet[id] = abilityName end
-    elseif type(value) == "table" then
-        for _, v in pairs(value) do pushIdsFromValue(v, intoSet, abilityName) end
-    end
-end
-
-local function readConfigAnimations(module)
-    local ok, cfg = pcall(require, module)
-    if not ok or type(cfg) ~= "table" then return end
-    if type(cfg.Animations) == "table" then
-        for key, value in pairs(cfg.Animations) do
-            if ABILITY_ANIM_KEYS[key] then pushIdsFromValue(value, AIM.AnimIds, key) end
-        end
-    end
-    for _, field in ipairs(SOUND_FIELDS) do
-        local st = cfg[field]
-        if type(st) == "table" then
-            for key, value in pairs(st) do
-                if ABILITY_SOUND_KEYS[key] then pushIdsFromValue(value, AIM.SoundIds, key) end
-            end
-        end
-    end
-end
-
-local function loadMyAbilityIds(char)
-    AIM.AnimIds  = {}
-    AIM.SoundIds = {}
-    for id, name in pairs(STATIC_ABILITY_ANIMS) do AIM.AnimIds[id] = name end
-    for id, name in pairs(STATIC_ABILITY_SOUNDS) do AIM.SoundIds[id] = name end
-
-    if not Assets or not char then return end
-    local charName = char:GetAttribute("CharacterName") or char.Name
-    local skinName = char:GetAttribute("SkinName") or "Default"
-    local survivorsFolder = Assets:FindFirstChild("Survivors")
-    local survivorFolder  = survivorsFolder and survivorsFolder:FindFirstChild(charName)
-    if survivorFolder then
-        local baseCfg = survivorFolder:FindFirstChild("Config")
-        if baseCfg then readConfigAnimations(baseCfg) end
-    end
-    if skinName and skinName ~= "Default" then
-        local skinsRoot  = Assets:FindFirstChild("Skins")
-        local skinsSurv  = skinsRoot and skinsRoot:FindFirstChild("Survivors")
-        local skinChar   = skinsSurv and skinsSurv:FindFirstChild(charName)
-        local skinFolder = skinChar and skinChar:FindFirstChild(skinName)
-        if skinFolder then
-            local skinCfg = skinFolder:FindFirstChild("Config")
-            if skinCfg then readConfigAnimations(skinCfg) end
-        end
-    end
-end
 
 local function getPing()
     local ok, v = pcall(function() return lp:GetNetworkPing() end)
@@ -554,111 +467,6 @@ local function getMyRole()
     return nil
 end
 
-local function pushEvent(abilityName)
-    AIM.EventRefCount += 1
-    AIM.EventActive = true
-    AIM.CurrentAbility = abilityName
-    if AIM.Debug then print("[aim] event start: " .. tostring(abilityName)) end
-end
-
-local function popEvent()
-    AIM.EventRefCount = math.max(0, AIM.EventRefCount - 1)
-    if AIM.EventRefCount == 0 then
-        AIM.EventActive = false
-        AIM.CurrentAbility = nil
-    end
-end
-
-local function attachAnimWatcher(char)
-    if AIM.AnimConn then pcall(function() AIM.AnimConn:Disconnect() end) AIM.AnimConn = nil end
-    local hum = char:WaitForChild("Humanoid", 5)
-    if not hum then return end
-    local animator = hum:WaitForChild("Animator", 5)
-    if not animator then return end
-
-    AIM.AnimConn = animator.AnimationPlayed:Connect(function(track)
-        local anim = track.Animation
-        if not anim then return end
-        local animId = tostring(anim.AnimationId):match("%d+")
-        if not animId then return end
-        local abilityName = AIM.AnimIds[animId]
-        if not abilityName then return end
-        pushEvent(abilityName)
-        local ended = false
-        local function finish()
-            if ended then return end
-            ended = true
-            popEvent()
-        end
-        track.Stopped:Once(finish)
-        local dur = track.Length
-        if not dur or dur <= 0 then dur = 0.5 end
-        task.delay(dur + 0.2, finish)
-    end)
-end
-
-local GENERIC_ABILITY_MIN_LEN = 0.1
-local function attachGenericWatcher(char)
-    if AIM.GenericConn then pcall(function() AIM.GenericConn:Disconnect() end) AIM.GenericConn = nil end
-    local hum = char:WaitForChild("Humanoid", 5)
-    if not hum then return end
-    local animator = hum:WaitForChild("Animator", 5)
-    if not animator then return end
-
-    AIM.GenericConn = animator.AnimationPlayed:Connect(function(track)
-        if not AIM.Enabled then return end
-        local prio = track.Priority
-        if prio ~= Enum.AnimationPriority.Action
-           and prio ~= Enum.AnimationPriority.Action2
-           and prio ~= Enum.AnimationPriority.Action3
-           and prio ~= Enum.AnimationPriority.Action4 then return end
-        local dur = track.Length
-        if not dur or dur < GENERIC_ABILITY_MIN_LEN then return end
-        local animId = track.Animation and tostring(track.Animation.AnimationId):match("%d+") or "?"
-        if AIM.AnimIds[animId] then return end
-        pushEvent("Generic")
-        local ended = false
-        local function finish()
-            if ended then return end
-            ended = true
-            popEvent()
-        end
-        track.Stopped:Once(finish)
-        task.delay(dur + 0.2, finish)
-    end)
-end
-
-local function hookMySound(s)
-    if not s:IsA("Sound") then return end
-    return s.Played:Connect(function()
-        local sid = s.SoundId and tostring(s.SoundId):match("%d+") or nil
-        if not sid then return end
-        local abilityName = AIM.SoundIds[sid]
-        if not abilityName then return end
-        pushEvent(abilityName)
-        local dur = s.TimeLength
-        if not dur or dur <= 0 then dur = 0.4 end
-        task.delay(dur + 0.15, popEvent)
-    end)
-end
-
-local function attachSoundWatcher(char)
-    for _, c in ipairs(AIM.SoundConns) do pcall(function() c:Disconnect() end) end
-    AIM.SoundConns = {}
-    for _, s in ipairs(char:GetDescendants()) do
-        if s:IsA("Sound") then
-            local c = hookMySound(s)
-            if c then table.insert(AIM.SoundConns, c) end
-        end
-    end
-    table.insert(AIM.SoundConns, char.DescendantAdded:Connect(function(d)
-        if d:IsA("Sound") then
-            local c = hookMySound(d)
-            if c then table.insert(AIM.SoundConns, c) end
-        end
-    end))
-end
-
 local function isPlayingSurvivor()
     if getMyRole() ~= "Survivors" then return false end
     local char = lp.Character
@@ -667,27 +475,6 @@ local function isPlayingSurvivor()
     if not hum or hum.Health <= 0 then return false end
     return true
 end
-
-local function attachAimToCharacter(char)
-    if char ~= lp.Character then return end
-    local t0 = os.clock()
-    while not (char:GetAttribute("CharacterName")) and os.clock() - t0 < 3 do
-        task.wait(0.1)
-    end
-    loadMyAbilityIds(char)
-    task.spawn(attachAnimWatcher, char)
-    task.spawn(attachGenericWatcher, char)
-    task.spawn(attachSoundWatcher, char)
-end
-
-if lp.Character then task.spawn(attachAimToCharacter, lp.Character) end
-lp.CharacterAdded:Connect(function(c)
-    AIM.EventActive = false
-    AIM.EventRefCount = 0
-    AIM.CurrentAbility = nil
-    task.wait(0.3)
-    task.spawn(attachAimToCharacter, c)
-end)
 
 local function updateCachedTarget()
     local myRoot = getRoot(lp.Character)
@@ -756,133 +543,33 @@ local function applyAim(targetPos)
     end
 end
 
-function AIM.ForceAimNow(duration)
+function AIM.ForceAimNow(duration, abilityName)
     AIM._forceUntil = tick() + (duration or 1.0)
+    if abilityName then AIM.CurrentAbility = abilityName end
 end
 
 RunService.RenderStepped:Connect(function()
     if not AIM.Enabled then return end
     if not isPlayingSurvivor() then return end
     if not AIM.CachedTargetHRP or not AIM.CachedTargetHRP.Parent then return end
-    local active = AIM.ForceAim
-        or AIM.EventActive
-        or tick() < (AIM._forceUntil or 0)
-    if not active then return end
-    applyAim(predictHRP(AIM.CachedTargetHRP))
-end)
-
--- chance aim v2
-CHANCEAIM = {
-    Enabled      = false,
-    LockTime     = 0.9,
-    PredMin      = 2,
-    PredMax      = 3,
-    TurnExtra    = 0.9,
-    TurnDot      = 0.45,
-    Aggressive   = true,
-    _locking     = false,
-    _lockUntil   = 0,
-    _target      = nil,
-    _velHistory  = {},
-    _lastFire    = 0,
-}
-
-local function caSmoothedVelocity(root)
-    if not root then return Vector3.zero end
-    local v = root.AssemblyLinearVelocity
-    table.insert(CHANCEAIM._velHistory, v)
-    if #CHANCEAIM._velHistory > 10 then table.remove(CHANCEAIM._velHistory, 1) end
-    local sum = Vector3.zero
-    for i = 1, #CHANCEAIM._velHistory do sum = sum + CHANCEAIM._velHistory[i] end
-    return sum / math.max(#CHANCEAIM._velHistory, 1)
-end
-
-local function caPredict(root)
-    if not root then return nil end
-    local pos = root.Position
-    local vel = caSmoothedVelocity(root)
-    local horiz = Vector3.new(vel.X, 0, vel.Z)
-    local speed = horiz.Magnitude
-    if speed < 1.2 then return pos end
-    local lead = CHANCEAIM.PredMin
-        + (CHANCEAIM.PredMax - CHANCEAIM.PredMin) * math.clamp(speed / 28, 0, 1)
-    if #CHANCEAIM._velHistory >= 3 then
-        local a = CHANCEAIM._velHistory[#CHANCEAIM._velHistory - 2]
-        local b = CHANCEAIM._velHistory[#CHANCEAIM._velHistory]
-        local ah = Vector3.new(a.X, 0, a.Z)
-        local bh = Vector3.new(b.X, 0, b.Z)
-        if ah.Magnitude > 2 and bh.Magnitude > 2
-           and ah.Unit:Dot(bh.Unit) < CHANCEAIM.TurnDot then
-            lead = lead + CHANCEAIM.TurnExtra
-        end
-    end
-    return pos + horiz.Unit * lead
-end
-
-local function caDoLock(root)
-    local me = getMyRoot()
-    if not me or not root or not root.Parent then return end
-    local aimAt = caPredict(root)
-    if not aimAt then return end
-    local myPos = me.Position
-    me.AssemblyAngularVelocity = Vector3.zero
-    local cf = CFrame.new(myPos, Vector3.new(aimAt.X, myPos.Y, aimAt.Z))
-    if CHANCEAIM.Aggressive then
-        me.CFrame = cf
-        me.CFrame = cf
-        me.CFrame = cf
-    else
-        me.CFrame = cf
-    end
-end
-
-local function caStartLock()
-    if not CHANCEAIM.Enabled then return end
-    if tick() - CHANCEAIM._lastFire < 0.12 then return end
-    local root = nearestKillerPart()
-    if not root then return end
-    CHANCEAIM._lastFire = tick()
-    CHANCEAIM._locking = true
-    CHANCEAIM._lockUntil = tick() + CHANCEAIM.LockTime
-    CHANCEAIM._target = root
-    CHANCEAIM._velHistory = {}
-    for _ = 1, 6 do caDoLock(root) end
-end
-
-RunService.RenderStepped:Connect(function()
-    if not CHANCEAIM.Enabled or not CHANCEAIM._locking then return end
-    if tick() > CHANCEAIM._lockUntil then
-        CHANCEAIM._locking = false
-        CHANCEAIM._target = nil
-        CHANCEAIM._velHistory = {}
+    local active = AIM.ForceAim or tick() < (AIM._forceUntil or 0)
+    if not active then
+        AIM.CurrentAbility = nil
         return
     end
-    local root = nearestKillerPart()
-    if root then CHANCEAIM._target = root end
-    if CHANCEAIM._target and CHANCEAIM._target.Parent then
-        if CHANCEAIM.Aggressive then
-            caDoLock(CHANCEAIM._target)
-            caDoLock(CHANCEAIM._target)
-            caDoLock(CHANCEAIM._target)
-            caDoLock(CHANCEAIM._target)
-        else
-            caDoLock(CHANCEAIM._target)
-        end
-    end
+    applyAim(predictHRP(AIM.CachedTargetHRP))
 end)
 
 -- ability button hook (stun abilities only)
 AbilityHook = {
     Enabled = true,
 
-    -- Only survivors with a real stun ability are listed here.
-    -- Anyone not in this table gets no button hook.
     StunAbilities = {
-        Chance     = { Button = "Shoot",   Lock = 0.60 },
-        Shedletsky = { Button = "Slash",   Lock = 0.35 },
-        TwoTime    = { Button = "Dagger",  Lock = 0.50 },
-        Guest1337  = { Button = "Punch",   Lock = 0.40 },
-        JaneDoe    = { Button = "Hatchet", Lock = 0.55 },
+        Chance     = { Button = "Shoot",   Lock = 0.60, Ability = "AimGun" },
+        Shedletsky = { Button = "Slash",   Lock = 0.35, Ability = "Slash" },
+        TwoTime    = { Button = "Dagger",  Lock = 0.50, Ability = "Stab" },
+        Guest1337  = { Button = "Punch",   Lock = 0.40, Ability = "Punch" },
+        JaneDoe    = { Button = "Hatchet", Lock = 0.55, Ability = "Axe" },
     },
 
     Hooked   = {},
@@ -906,13 +593,7 @@ local function ahFireButtonAim(btn, cfg)
     AbilityHook.LastTap[btn] = now
 
     if AIM and AIM.Enabled then
-        AIM.ForceAimNow(cfg.Lock)
-    end
-    if CHANCEAIM and CHANCEAIM.Enabled and lp.Character then
-        local name = lp.Character:GetAttribute("CharacterName") or lp.Character.Name
-        if name == "Chance" then
-            caStartLock()
-        end
+        AIM.ForceAimNow(cfg.Lock, cfg.Ability)
     end
 end
 
@@ -994,7 +675,6 @@ ahScanContainer()
 GUESTAIM = {
     Enabled = false,
     AutoPunchOnParry = true,
-    AutoPunchOnM1 = false,
     AimOnPunch = true,
     AimMode = "Character",
     AimDuration = 0.8,
@@ -1004,18 +684,7 @@ GUESTAIM = {
     _lastPunch = 0,
     _aimUntil = 0,
     _parryConn = nil,
-    _animConn = nil,
     _parrySetupDone = false,
-}
-
-local GUEST_PUNCH_ANIMS = {
-    ["87259391926321"]  = true, ["99100240941590"]  = true, ["72685103823181"]  = true,
-    ["81905101227053"]  = true, ["113936304594883"] = true, ["140703210927645"] = true,
-    ["136007065400978"] = true, ["129843313690921"] = true, ["86709774283672"]  = true,
-    ["108807732150251"] = true, ["138040001965654"] = true, ["86096387000557"]  = true,
-    ["119850211147676"] = true, ["131696603025265"] = true, ["119462383658044"] = true,
-    ["116618003477002"] = true, ["133491532453922"] = true, ["76649505662612"]  = true,
-    ["71190646367497"]  = true,
 }
 
 local function guestFirePunch()
@@ -1050,25 +719,10 @@ local function guestSetupParryHook()
     return ok2
 end
 
-local function guestHookOwnAnimator(char)
-    if GUESTAIM._animConn then pcall(function() GUESTAIM._animConn:Disconnect() end) GUESTAIM._animConn = nil end
-    if not char then return end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    local animator = hum and hum:FindFirstChildOfClass("Animator")
-    if not animator then return end
-    GUESTAIM._animConn = animator.AnimationPlayed:Connect(function(track)
-        if not GUESTAIM.Enabled then return end
-        local id = track.Animation and tostring(track.Animation.AnimationId):match("(%d+)")
-        if not id then return end
-        if GUEST_PUNCH_ANIMS[id] then guestStartAimWindow() end
-    end)
-end
-
 lp.CharacterAdded:Connect(function(char)
     task.wait(0.8)
     if GUESTAIM.Enabled then
         guestSetupParryHook()
-        guestHookOwnAnimator(char)
     end
 end)
 if lp.Character then
@@ -1076,7 +730,6 @@ if lp.Character then
         task.wait(0.5)
         if GUESTAIM.Enabled then
             guestSetupParryHook()
-            guestHookOwnAnimator(lp.Character)
         end
     end)
 end
@@ -2064,25 +1717,6 @@ AimTab:CreateToggle({ name = "aim on stun tap", value = true, flag = "Aim_BtnHoo
     callback = function(v) AbilityHook.Enabled = v end })
 AimTab:CreateText({ name = "info", text = "fires only on stun abilities: chance shoot / shed slash / two time dagger / guest punch / jane hatchet" })
 
-AimTab:CreateSection({ name = "chance aim" })
-AimTab:CreateToggle({ name = "chance aim on", value = false, flag = "CA_On",
-    callback = function(v) CHANCEAIM.Enabled = v end })
-AimTab:CreateSlider({ name = "lock time", range = {0.3, 2}, increment = 0.05, suffix = "s",
-    value = CHANCEAIM.LockTime, flag = "CA_Lock",
-    callback = function(v) CHANCEAIM.LockTime = v end })
-AimTab:CreateSlider({ name = "pred min", range = {0, 6}, increment = 0.1,
-    value = CHANCEAIM.PredMin, flag = "CA_PredMin",
-    callback = function(v) CHANCEAIM.PredMin = v end })
-AimTab:CreateSlider({ name = "pred max", range = {0, 8}, increment = 0.1,
-    value = CHANCEAIM.PredMax, flag = "CA_PredMax",
-    callback = function(v) CHANCEAIM.PredMax = v end })
-AimTab:CreateSlider({ name = "turn extra", range = {0, 3}, increment = 0.1,
-    value = CHANCEAIM.TurnExtra, flag = "CA_TurnExtra",
-    callback = function(v) CHANCEAIM.TurnExtra = v end })
-AimTab:CreateToggle({ name = "aggressive writes", value = true, flag = "CA_Aggressive",
-    callback = function(v) CHANCEAIM.Aggressive = v end })
-AimTab:CreateText({ name = "note", text = "smoothed velocity + turn prediction + multi cframe writes. use only as chance" })
-
 AimTab:CreateSection({ name = "mode" })
 AimTab:CreateDropdown({ name = "aim mode", options = {"Camera", "HRP", "HRP+Camera"}, value = {"Camera"},
     flag = "Aim_Mode",
@@ -2102,15 +1736,6 @@ AimTab:CreateSlider({ name = "ping mult", range = {0, 2}, increment = 0.05,
     value = AIM.PingMult, flag = "Aim_PingMult",
     callback = function(v) AIM.PingMult = v end })
 
-AimTab:CreateSection({ name = "manual" })
-AimTab:CreateButton({ name = "reload ids",
-    callback = function()
-        if lp.Character then
-            loadMyAbilityIds(lp.Character)
-            Window:Notify({ title = "aim", content = "reloaded", duration = 3 })
-        end
-    end })
-
 -- guest
 local GuestTab = Window:CreateTab({ name = "guest", icon = 4483362458 })
 GuestTab:CreateSection({ name = "auto punch" })
@@ -2119,7 +1744,6 @@ GuestTab:CreateToggle({ name = "on", value = false, flag = "GA_On",
         GUESTAIM.Enabled = v
         if v then
             guestSetupParryHook()
-            guestHookOwnAnimator(lp.Character)
         end
     end })
 GuestTab:CreateToggle({ name = "punch on parry", value = true, flag = "GA_AutoParry",
