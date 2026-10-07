@@ -549,15 +549,41 @@ function AIM.ForceAimNow(duration, abilityName)
 end
 
 RunService.RenderStepped:Connect(function()
-    if not AIM.Enabled then return end
     if not isPlayingSurvivor() then return end
     if not AIM.CachedTargetHRP or not AIM.CachedTargetHRP.Parent then return end
-    local active = AIM.ForceAim or tick() < (AIM._forceUntil or 0)
+
+    local forced = tick() < (AIM._forceUntil or 0)
+    local active = forced or (AIM.Enabled and AIM.ForceAim)
     if not active then
         AIM.CurrentAbility = nil
         return
     end
-    applyAim(predictHRP(AIM.CachedTargetHRP))
+
+    local targetPos = predictHRP(AIM.CachedTargetHRP)
+    if not targetPos then return end
+
+    if forced then
+        -- Hard snap like the reference script: overwrite HRP CFrame several
+        -- times per frame so replication doesn't fight back.
+        local myRoot = lp.Character and lp.Character:FindFirstChild("HumanoidRootPart")
+        if myRoot then
+            myRoot.AssemblyAngularVelocity = Vector3.zero
+            local flat = Vector3.new(targetPos.X, myRoot.Position.Y, targetPos.Z)
+            if (flat - myRoot.Position).Magnitude > 0.05 then
+                local cf = CFrame.lookAt(myRoot.Position, flat)
+                myRoot.CFrame = cf
+                myRoot.CFrame = cf
+                myRoot.CFrame = cf
+                myRoot.CFrame = cf
+            end
+        end
+        -- Also drive the camera toward the target so gun raycasts follow.
+        pcall(function()
+            Camera.CFrame = CFrame.lookAt(Camera.CFrame.Position, targetPos)
+        end)
+    else
+        applyAim(targetPos)
+    end
 end)
 
 -- ability button hook (stun abilities only)
@@ -578,10 +604,16 @@ AbilityHook = {
     _uiWatcher = nil,
 }
 
+local AH_LOWER_MAP = {}
+for k, v in pairs(AbilityHook.StunAbilities) do
+    AH_LOWER_MAP[string.lower(k)] = v
+end
+
 local function ahStunConfigForCurrentChar()
     if not lp.Character then return nil end
     local name = lp.Character:GetAttribute("CharacterName") or lp.Character.Name
-    return AbilityHook.StunAbilities[name]
+    if not name then return nil end
+    return AbilityHook.StunAbilities[name] or AH_LOWER_MAP[string.lower(name)]
 end
 
 local function ahFireButtonAim(btn, cfg)
@@ -592,7 +624,8 @@ local function ahFireButtonAim(btn, cfg)
     if last and now - last < AbilityHook.Debounce then return end
     AbilityHook.LastTap[btn] = now
 
-    if AIM and AIM.Enabled then
+    -- Button hook is independent of the AIM master toggle
+    if AIM then
         AIM.ForceAimNow(cfg.Lock, cfg.Ability)
     end
 end
@@ -621,19 +654,65 @@ local function ahHookButton(btn, cfg)
     end
 end
 
+-- word fragments per stun ability so we can match by name OR text
+local ABILITY_KEYWORDS = {
+    Chance     = { "shoot", "gun", "oneshot", "one shot", "flint", "pistol", "revolver" },
+    Shedletsky = { "slash", "sword" },
+    TwoTime    = { "dagger", "stab", "knife" },
+    Guest1337  = { "punch", "fist" },
+    JaneDoe    = { "hatchet", "axe" },
+}
+
+local function ahButtonMatches(btn, cfg, charName)
+    if btn.Name == cfg.Button then return true end
+    local kws = ABILITY_KEYWORDS[charName]
+    if not kws then return false end
+    local blobs = { string.lower(tostring(btn.Name or "")) }
+    if btn:IsA("TextButton") or btn:IsA("TextLabel") then
+        blobs[#blobs + 1] = string.lower(tostring(btn.Text or ""))
+    end
+    for _, d in ipairs(btn:GetDescendants()) do
+        if d:IsA("TextLabel") or d:IsA("TextButton") then
+            blobs[#blobs + 1] = string.lower(tostring(d.Text or ""))
+            blobs[#blobs + 1] = string.lower(tostring(d.Name or ""))
+        end
+    end
+    for _, blob in ipairs(blobs) do
+        for _, kw in ipairs(kws) do
+            if blob:find(kw, 1, true) then return true end
+        end
+    end
+    return false
+end
+
 local function ahScanContainer()
     if not AbilityHook.Enabled then return end
     local cfg = ahStunConfigForCurrentChar()
     if not cfg then return end
+    local charName = lp.Character
+        and (lp.Character:GetAttribute("CharacterName") or lp.Character.Name)
+        or ""
     local pg = lp:FindFirstChild("PlayerGui")
     if not pg then return end
+
+    -- Preferred path first
     local main = pg:FindFirstChild("MainUI")
     local container = main and main:FindFirstChild("AbilityContainer")
-    if not container then return end
-    for _, child in ipairs(container:GetChildren()) do
-        if child:IsA("GuiButton") and child.Name == cfg.Button then
-            ahHookButton(child, cfg)
+
+    -- Fallback: walk everything
+    local function try(btn)
+        if btn:IsA("GuiButton") and ahButtonMatches(btn, cfg, charName) then
+            ahHookButton(btn, cfg)
         end
+    end
+
+    if container then
+        for _, c in ipairs(container:GetChildren()) do try(c) end
+    end
+
+    -- Always also do a full descend so we don't miss nested layouts
+    for _, d in ipairs(pg:GetDescendants()) do
+        if d:IsA("GuiButton") then try(d) end
     end
 end
 
@@ -648,7 +727,11 @@ local function ahInstallUiWatcher()
         if not AbilityHook.Enabled then return end
         if not d:IsA("GuiButton") then return end
         local cfg = ahStunConfigForCurrentChar()
-        if cfg and d.Name == cfg.Button then
+        if not cfg then return end
+        local charName = lp.Character
+            and (lp.Character:GetAttribute("CharacterName") or lp.Character.Name)
+            or ""
+        if ahButtonMatches(d, cfg, charName) then
             ahHookButton(d, cfg)
         end
     end)
@@ -1714,7 +1797,13 @@ AimTab:CreateToggle({ name = "debug", value = false, flag = "Aim_Debug",
 
 AimTab:CreateSection({ name = "button hook" })
 AimTab:CreateToggle({ name = "aim on stun tap", value = true, flag = "Aim_BtnHook",
-    callback = function(v) AbilityHook.Enabled = v end })
+    callback = function(v)
+        AbilityHook.Enabled = v
+        if v then
+            ahScanContainer()
+            ahInstallUiWatcher()
+        end
+    end })
 AimTab:CreateText({ name = "info", text = "fires only on stun abilities: chance shoot / shed slash / two time dagger / guest punch / jane hatchet" })
 
 AimTab:CreateSection({ name = "mode" })
