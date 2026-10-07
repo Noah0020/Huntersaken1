@@ -771,7 +771,7 @@ RunService.RenderStepped:Connect(function()
     applyAim(predictHRP(AIM.CachedTargetHRP))
 end)
 
--- chance aim v2 (smoothed vel + turn predict)
+-- chance aim v2
 CHANCEAIM = {
     Enabled      = false,
     LockTime     = 0.9,
@@ -871,65 +871,57 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- ability button hook (fires aim on tap)
+-- ability button hook (stun abilities only)
 AbilityHook = {
     Enabled = true,
-    CharButtonMap = {
-        Chance     = "Shoot",
-        Shedletsky = "Slash",
-        TwoTime    = "Dagger",
-        Guest1337  = "Punch",
+
+    -- Only survivors with a real stun ability are listed here.
+    -- Anyone not in this table gets no button hook.
+    StunAbilities = {
+        Chance     = { Button = "Shoot",   Lock = 0.60 },
+        Shedletsky = { Button = "Slash",   Lock = 0.35 },
+        TwoTime    = { Button = "Dagger",  Lock = 0.50 },
+        Guest1337  = { Button = "Punch",   Lock = 0.40 },
+        JaneDoe    = { Button = "Hatchet", Lock = 0.55 },
     },
-    LockDuration = {
-        Shoot  = 0.60,
-        Slash  = 0.35,
-        Dagger = 0.50,
-        Punch  = 0.40,
-    },
-    KeywordFallback = {
-        shoot = 0.60, gun = 0.60, flint = 0.60, chance = 0.60,
-        slash = 0.35, sword = 0.35,
-        dagger = 0.50, stab = 0.50,
-        punch = 0.40,
-    },
+
     Hooked   = {},
     LastTap  = {},
     Debounce = 0.05,
     _uiWatcher = nil,
 }
 
-local function ahLockDurationForButton(btn)
-    if not btn then return 0.4 end
-    local d = AbilityHook.LockDuration[btn.Name]
-    if d then return d end
-    local n = string.lower(tostring(btn.Name or ""))
-    for kw, dur in pairs(AbilityHook.KeywordFallback) do
-        if n:find(kw, 1, true) then return dur end
-    end
-    return 0.4
+local function ahStunConfigForCurrentChar()
+    if not lp.Character then return nil end
+    local name = lp.Character:GetAttribute("CharacterName") or lp.Character.Name
+    return AbilityHook.StunAbilities[name]
 end
 
-local function ahFireButtonAim(btn)
+local function ahFireButtonAim(btn, cfg)
     if not AbilityHook.Enabled then return end
+    if not cfg then return end
     local now = tick()
     local last = AbilityHook.LastTap[btn]
     if last and now - last < AbilityHook.Debounce then return end
     AbilityHook.LastTap[btn] = now
 
     if AIM and AIM.Enabled then
-        AIM.ForceAimNow(ahLockDurationForButton(btn))
+        AIM.ForceAimNow(cfg.Lock)
     end
-    if CHANCEAIM and CHANCEAIM.Enabled then
-        caStartLock()
+    if CHANCEAIM and CHANCEAIM.Enabled and lp.Character then
+        local name = lp.Character:GetAttribute("CharacterName") or lp.Character.Name
+        if name == "Chance" then
+            caStartLock()
+        end
     end
 end
 
-local function ahHookButton(btn)
+local function ahHookButton(btn, cfg)
     if not btn or AbilityHook.Hooked[btn] then return end
     if not btn:IsA("GuiButton") then return end
     AbilityHook.Hooked[btn] = true
 
-    local function fire() ahFireButtonAim(btn) end
+    local function fire() ahFireButtonAim(btn, cfg) end
     pcall(function() btn.Activated:Connect(fire) end)
     pcall(function() btn.MouseButton1Click:Connect(fire) end)
     pcall(function() btn.MouseButton1Down:Connect(fire) end)
@@ -944,19 +936,23 @@ local function ahHookButton(btn)
     end)
 
     if AIM and AIM.Debug then
-        print("[ah] hooked " .. tostring(btn.Name))
+        print("[ah] hooked stun button: " .. tostring(btn.Name))
     end
 end
 
 local function ahScanContainer()
     if not AbilityHook.Enabled then return end
+    local cfg = ahStunConfigForCurrentChar()
+    if not cfg then return end
     local pg = lp:FindFirstChild("PlayerGui")
     if not pg then return end
     local main = pg:FindFirstChild("MainUI")
     local container = main and main:FindFirstChild("AbilityContainer")
     if not container then return end
     for _, child in ipairs(container:GetChildren()) do
-        if child:IsA("GuiButton") then ahHookButton(child) end
+        if child:IsA("GuiButton") and child.Name == cfg.Button then
+            ahHookButton(child, cfg)
+        end
     end
 end
 
@@ -969,8 +965,10 @@ local function ahInstallUiWatcher()
     if not pg then return end
     AbilityHook._uiWatcher = pg.DescendantAdded:Connect(function(d)
         if not AbilityHook.Enabled then return end
-        if d:IsA("GuiButton") and d.Parent and d.Parent.Name == "AbilityContainer" then
-            ahHookButton(d)
+        if not d:IsA("GuiButton") then return end
+        local cfg = ahStunConfigForCurrentChar()
+        if cfg and d.Name == cfg.Button then
+            ahHookButton(d, cfg)
         end
     end)
 end
@@ -1956,10 +1954,7 @@ if KillersFolder then
     KillersFolder.ChildRemoved:Connect(function(k) removeFacingBox(k) end)
 end
 
--- =========================================================
 -- UI
--- =========================================================
-
 local Window = Rayfield:CreateWindow({
     name = "hunter",
     subtitle = "gg",
@@ -2065,9 +2060,9 @@ AimTab:CreateToggle({ name = "debug", value = false, flag = "Aim_Debug",
     callback = function(v) AIM.Debug = v end })
 
 AimTab:CreateSection({ name = "button hook" })
-AimTab:CreateToggle({ name = "aim on ability tap", value = true, flag = "Aim_BtnHook",
+AimTab:CreateToggle({ name = "aim on stun tap", value = true, flag = "Aim_BtnHook",
     callback = function(v) AbilityHook.Enabled = v end })
-AimTab:CreateText({ name = "info", text = "fires aim on the frame you tap the ability button - faster than anim" })
+AimTab:CreateText({ name = "info", text = "fires only on stun abilities: chance shoot / shed slash / two time dagger / guest punch / jane hatchet" })
 
 AimTab:CreateSection({ name = "chance aim" })
 AimTab:CreateToggle({ name = "chance aim on", value = false, flag = "CA_On",
