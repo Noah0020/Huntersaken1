@@ -590,13 +590,18 @@ end)
 AbilityHook = {
     Enabled = true,
 
+    -- Lock values match the wiki-documented windup + a small buffer
+    -- so aim stays locked through the entire activation and hit frame.
     StunAbilities = {
-        Chance     = { Button = "Shoot",   Lock = 0.60, Ability = "AimGun" },
-        Shedletsky = { Button = "Slash",   Lock = 0.35, Ability = "Slash" },
-        TwoTime    = { Button = "Dagger",  Lock = 0.50, Ability = "Stab" },
-        Guest1337  = { Button = "Punch",   Lock = 0.40, Ability = "Punch" },
-        JaneDoe    = { Button = "Hatchet", Lock = 0.55, Ability = "Axe" },
+        Chance     = { Button = "Shoot",   Lock = 1.20, Ability = "AimGun" },   -- 1.0s aim + 0.2 buffer
+        Shedletsky = { Button = "Slash",   Lock = 0.80, Ability = "Slash" },    -- 0.575s startup + 0.225 buffer
+        TwoTime    = { Button = "Dagger",  Lock = 0.50, Ability = "Stab" },     -- 0.3s charge + 0.2 buffer
+        Guest1337  = { Button = "Punch",   Lock = 0.90, Ability = "Punch" },    -- 0.7s windup + 0.2 buffer
+        JaneDoe    = { Button = "Hatchet", Lock = 0.95, Ability = "Axe" },      -- 0.75s prep + 0.2 buffer
     },
+
+    -- Global multiplier applied on top of every Lock value above
+    LockMultiplier = 1.0,
 
     Hooked   = {},
     LastTap  = {},
@@ -626,7 +631,8 @@ local function ahFireButtonAim(btn, cfg)
 
     -- Button hook is independent of the AIM master toggle
     if AIM then
-        AIM.ForceAimNow(cfg.Lock, cfg.Ability)
+        local dur = (cfg.Lock or 0.6) * (AbilityHook.LockMultiplier or 1.0)
+        AIM.ForceAimNow(dur, cfg.Ability)
     end
 end
 
@@ -1790,8 +1796,8 @@ AimTab:CreateToggle({ name = "on", value = false, flag = "Aim_On",
     callback = function(v) AIM.Enabled = v end })
 AimTab:CreateToggle({ name = "force aim", value = false, flag = "Aim_Force",
     callback = function(v) AIM.ForceAim = v end })
-AimTab:CreateKeybind({ name = "force 1s", value = Enum.KeyCode.C,
-    callback = function() AIM.ForceAimNow(1.0) end })
+AimTab:CreateKeybind({ name = "force 3s", value = Enum.KeyCode.C,
+    callback = function() AIM.ForceAimNow(3.0) end })
 AimTab:CreateToggle({ name = "debug", value = false, flag = "Aim_Debug",
     callback = function(v) AIM.Debug = v end })
 
@@ -1805,6 +1811,17 @@ AimTab:CreateToggle({ name = "aim on stun tap", value = true, flag = "Aim_BtnHoo
         end
     end })
 AimTab:CreateText({ name = "info", text = "fires only on stun abilities: chance shoot / shed slash / two time dagger / guest punch / jane hatchet" })
+AimTab:CreateSlider({
+    name = "lock multiplier",
+    range = { 0.5, 4 },
+    increment = 0.1,
+    value = AbilityHook.LockMultiplier,
+    flag = "Aim_LockMult",
+    callback = function(v)
+        AbilityHook.LockMultiplier = v
+    end
+})
+AimTab:CreateText({ name = "lock info", text = "1x = base (0.5-1.2s), 2x = doubled, 4x = max" })
 
 AimTab:CreateSection({ name = "mode" })
 AimTab:CreateDropdown({ name = "aim mode", options = {"Camera", "HRP", "HRP+Camera"}, value = {"Camera"},
